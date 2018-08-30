@@ -30,6 +30,7 @@ class Model(object):
         logging = kwargs.get('logging', False)
         self.logging = logging
 
+        # 这里的model可以作为一个样板，基本上包括了一个model所需要一切
         self.vars = {}
         self.placeholders = {}
 
@@ -45,6 +46,9 @@ class Model(object):
         self.opt_op = None
 
     def _build(self):
+        ''' 一个model必须实现这个方法，不同的具体模型这块不一样，其实这个实现结构也是来自于keras
+            这个函数的作用其实是为了将模型所必须的各个模块都赋值到模型变量中去
+        '''
         raise NotImplementedError
 
     def build(self):
@@ -53,13 +57,18 @@ class Model(object):
             self._build()
 
         # Build sequential layer model
+        # inputs作为第一层的activation，后面遍历所有的layers，添加上每层的activations对象中去
         self.activations.append(self.inputs)
+        # 从这里可以看到，该模型只能用于实现Sequential模型的子类，
         for layer in self.layers:
+            # layer的调用就在这里体现
             hidden = layer(self.activations[-1])
             self.activations.append(hidden)
+        # 最后一层即为输出
         self.outputs = self.activations[-1]
 
         # Store model variables for easy access
+        # 找到模型的所有变量
         variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=self.name)
         self.vars = {var.name: var for var in variables}
 
@@ -73,12 +82,15 @@ class Model(object):
         pass
 
     def _loss(self):
+        ''' 每个不同的子模型必须实现该方法 '''
         raise NotImplementedError
 
     def _accuracy(self):
+        ''' 每个不同的子模型必须实现该方法 '''
         raise NotImplementedError
 
     def save(self, sess=None):
+        ''' 保存和加载都是运行时的概念，因此必须传入sess '''
         if not sess:
             raise AttributeError("TensorFlow session not provided.")
         saver = tf.train.Saver(self.vars)
@@ -86,6 +98,7 @@ class Model(object):
         print("Model saved in file: %s" % save_path)
 
     def load(self, sess=None):
+        ''' 加载必须传入sess，这样模型会保存在sess中 '''
         if not sess:
             raise AttributeError("TensorFlow session not provided.")
         saver = tf.train.Saver(self.vars)
@@ -150,9 +163,11 @@ class MLP(Model):
 
 class GeneralizedModel(Model):
     """
+    这里的所有模型的基类
     Base class for models that aren't constructed from traditional, sequential layers.
     Subclasses must set self.outputs in _build method
 
+    没有传统的那些layer
     (Removes the layers idiom from build method of the Model class)
     """
 
@@ -161,7 +176,9 @@ class GeneralizedModel(Model):
         
 
     def build(self):
-        """ Wrapper for _build() """
+        """ Wrapper for _build()
+            这是覆盖了父类的build方法
+        """
         with tf.variable_scope(self.name):
             self._build()
 
@@ -177,6 +194,7 @@ class GeneralizedModel(Model):
 
 # SAGEInfo is a namedtuple that specifies the parameters 
 # of the recursive GraphSAGE layers
+# 一个namedtuple，类似于一个struct。简单的存储数据
 SAGEInfo = namedtuple("SAGEInfo",
     ['layer_name', # name of the layer (to get feature embedding etc.)
      'neigh_sampler', # callable neigh_sampler constructor
@@ -187,6 +205,7 @@ SAGEInfo = namedtuple("SAGEInfo",
 class SampleAndAggregate(GeneralizedModel):
     """
     Base implementation of unsupervised GraphSAGE
+    无监督的实现，有监督实现是无监督实现的子类
     """
 
     def __init__(self, placeholders, features, adj, degrees,
@@ -249,13 +268,16 @@ class SampleAndAggregate(GeneralizedModel):
 
         self.optimizer = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
 
+        # 初始化这块和有监督的基本上是一致的
+
         self.build()
 
     def sample(self, inputs, layer_infos, batch_size=None):
         """ Sample neighbors to be the supportive fields for multi-layer convolutions.
+            从邻居节点进行采样，作为当前节点的convolution support
+            输出的samples形为[layer_num, [support_size*batch_size, 1]]
 
-        Args:
-            inputs: batch inputs
+        Args: inputs: batch inputs，就是 a list of 节点id
             batch_size: the number of inputs (different for batch inputs and negative samples).
         """
         
@@ -267,10 +289,15 @@ class SampleAndAggregate(GeneralizedModel):
         support_sizes = [support_size]
         for k in range(len(layer_infos)):
             t = len(layer_infos) - k - 1
+            # 可以看到，从高layer到低layer，support size是成倍增加，我的理解是这个support size类似于convolution support的
+            # receptive field?
             support_size *= layer_infos[t].num_samples
+            # 需要注意的是，这个sampler里已经包含了邻居adj信息，要不然会疑惑从哪里获得邻居信息的
             sampler = layer_infos[t].neigh_sampler
             node = sampler((samples[k], layer_infos[t].num_samples))
+            # 摊平是为了后面可以继续基于邻居样本采样邻居的邻居，这其实是个计算二阶三阶邻居的过程。大数据集上可能会有内存问题
             samples.append(tf.reshape(node, [support_size * batch_size,]))
+            # 当然是越往下suppor size越大
             support_sizes.append(support_size)
         return samples, support_sizes
 
@@ -279,6 +306,7 @@ class SampleAndAggregate(GeneralizedModel):
             aggregators=None, name=None, concat=False, model_size="small"):
         """ At each layer, aggregate hidden representations of neighbors to compute the hidden representations 
             at next layer.
+            执行aggregate运算，加入hidden信息
         Args:
             samples: a list of samples of variable hops away for convolving at each layer of the
                 network. Length is the number of layers + 1. Each is a vector of node indices.
@@ -289,6 +317,7 @@ class SampleAndAggregate(GeneralizedModel):
             support_sizes: the number of nodes to gather information from for each layer.
             batch_size: the number of inputs (different for batch inputs and negative samples).
         Returns:
+            返回所有节点最后一层的隐层表示，其实也就是经过aggregate之后的隐层表示，可以理解为是一个较为完整的graphsage
             The hidden representation at the final layer for all nodes in batch
         """
 
@@ -296,15 +325,20 @@ class SampleAndAggregate(GeneralizedModel):
             batch_size = self.batch_size
 
         # length: number of layers + 1
+        # 节点到embedding的映射，可以认为本身+一阶邻居+二阶邻居（not exactly）的特征都被取出
         hidden = [tf.nn.embedding_lookup(input_features, node_samples) for node_samples in samples]
         new_agg = aggregators is None
         if new_agg:
             aggregators = []
         for layer in range(len(num_samples)):
+            # layer对应当前层，即是输入节点本身，一阶，还是二阶
             if new_agg:
+                # 是否拼接决定embedding维度的乘数
                 dim_mult = 2 if concat and (layer != 0) else 1
                 # aggregator at current layer
                 if layer == len(num_samples) - 1:
+                    # 如果是最后一层，就不线性化了，意义何在？
+                    # aggregator就是从类的域中获取
                     aggregator = self.aggregator_cls(dim_mult*dims[layer], dims[layer+1], act=lambda x : x,
                             dropout=self.placeholders['dropout'], 
                             name=name, concat=concat, model_size=model_size)
@@ -314,15 +348,24 @@ class SampleAndAggregate(GeneralizedModel):
                             name=name, concat=concat, model_size=model_size)
                 aggregators.append(aggregator)
             else:
+                # 重复利用某层的aggregator
                 aggregator = aggregators[layer]
+            # 以上aggregator已经初始化好，下面会进行aggregate操作
+
+            # 这段其实是非常核心的代码逻辑
             # hidden representation at current layer for all support nodes that are various hops away
             next_hidden = []
             # as layer increases, the number of support nodes needed decreases
+            # 假设总共有两层，为[input, layer1, layer2]，那么眺数分别为[3,2,1]
+            # 该次遍历其实是遍历所有需要该aggregator的层，然后对这些层都实施一个当前aggregate layer的操作
+            # 因此可以推断，必然需要最后一层aggregate layer类型操作的层只有一个
+            # 为何要对所有一跳，二跳的邻居都执行相同的aggregate操作，因为当前阶和后一阶都是下一次aggregate所需要的输入
             for hop in range(len(num_samples) - layer):
                 dim_mult = 2 if concat and (layer != 0) else 1
                 neigh_dims = [batch_size * support_sizes[hop], 
                               num_samples[len(num_samples) - hop - 1], 
                               dim_mult*dims[layer]]
+                # hidden[hop]与hidden[hop+1] 分别是aggregator的当前节点与当前节点的邻居
                 h = aggregator((hidden[hop],
                                 tf.reshape(hidden[hop + 1], neigh_dims)))
                 next_hidden.append(h)

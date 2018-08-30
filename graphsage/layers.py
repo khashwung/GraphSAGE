@@ -14,6 +14,7 @@ FLAGS = flags.FLAGS
 # which itself was very inspired by the keras package
 
 # global unique layer ID dictionary for layer name assignment
+# 全局唯一存储层的id编号的地方，这应该启发自keras
 _LAYER_UIDS = {}
 
 def get_layer_uid(layer_name=''):
@@ -28,6 +29,7 @@ def get_layer_uid(layer_name=''):
 class Layer(object):
     """Base layer class. Defines basic API for all layer objects.
     Implementation inspired by keras (http://keras.io).
+    这是一个Layer基类，所有的网络层都继承自该类
     # Properties
         name: String, defines the variable scope of the layer.
         logging: Boolean, switches Tensorflow histogram logging on/off
@@ -54,6 +56,7 @@ class Layer(object):
         self.sparse_inputs = False
 
     def _call(self, inputs):
+        ''' 真正执行抽象方法的地方，有点模板模式的味道，强调一个流程，并把某一不一样的流程通过继承去实现 '''
         return inputs
 
     def __call__(self, inputs):

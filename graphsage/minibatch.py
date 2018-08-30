@@ -182,8 +182,10 @@ class NodeMinibatchIterator(object):
 
     G -- networkx graph
     id2idx -- dict mapping node ids to integer values indexing feature tensor
+        这个就是id_map文件做的事情，即节点id到feature row indexing的映射
     placeholders -- standard tensorflow placeholders object for feeding
     label_map -- map from node ids to class values (integer or list)
+        这个就是class_map文件做的事情，节点id到类别的映射，这里数据集提供的是list形式
     num_classes -- number of output classes
     batch_size -- size of the minibatches
     max_degree -- maximum size of the downsampled adjacency lists
@@ -206,12 +208,16 @@ class NodeMinibatchIterator(object):
         self.adj, self.deg = self.construct_adj()
         self.test_adj = self.construct_test_adj()
 
+        # 获取所有的val和test节点
         self.val_nodes = [n for n in self.G.nodes() if self.G.node[n]['val']]
         self.test_nodes = [n for n in self.G.nodes() if self.G.node[n]['test']]
 
+        # val+test节点全加在一起
         self.no_train_nodes_set = set(self.val_nodes + self.test_nodes)
+        # train_nodes 是用于训练的节点id的集合
         self.train_nodes = set(G.nodes()).difference(self.no_train_nodes_set)
         # don't train on nodes that only have edges to test set
+        # 如果节点度数为0，那么是因为该节点和其它节点相连的边都是用于测试的边
         self.train_nodes = [n for n in self.train_nodes if self.deg[id2idx[n]] > 0]
 
     def _make_label_vec(self, node):
@@ -219,34 +225,45 @@ class NodeMinibatchIterator(object):
         if isinstance(label, list):
             label_vec = np.array(label)
         else:
+            # 这里label是采用数字来表示的，即会将数字one hot成向量
             label_vec = np.zeros((self.num_classes))
             class_ind = self.label_map[node]
             label_vec[class_ind] = 1
         return label_vec
 
     def construct_adj(self):
+        # 用来存储所有节点的相邻节点的，为啥+1，应该是pad的那个0节点
+        # self.max_degree表示允许的最大邻居度数，不会存更多的邻居了
         adj = len(self.id2idx)*np.ones((len(self.id2idx)+1, self.max_degree))
+        # 用来存储所有节点的度数的
         deg = np.zeros((len(self.id2idx),))
 
         for nodeid in self.G.nodes():
+            # 跳过test或val节点，只处理train节点
             if self.G.node[nodeid]['test'] or self.G.node[nodeid]['val']:
                 continue
+            # 获取所有的neighbors
             neighbors = np.array([self.id2idx[neighbor] 
                 for neighbor in self.G.neighbors(nodeid)
                 if (not self.G[nodeid][neighbor]['train_removed'])])
+            # deg度数
             deg[self.id2idx[nodeid]] = len(neighbors)
             if len(neighbors) == 0:
                 continue
             if len(neighbors) > self.max_degree:
+                # 大于max_degree了，只好随机采样max_degree个neighbors了，不重复
                 neighbors = np.random.choice(neighbors, self.max_degree, replace=False)
             elif len(neighbors) < self.max_degree:
+                # 如果小于max_degree，也采样max_degree。这是重复采样，这个思路挺好，即时邻居不够也可以得到分布信息
                 neighbors = np.random.choice(neighbors, self.max_degree, replace=True)
             adj[self.id2idx[nodeid], :] = neighbors
         return adj, deg
 
     def construct_test_adj(self):
+        ''' 道理和构建用于训练的adj一样 '''
         adj = len(self.id2idx)*np.ones((len(self.id2idx)+1, self.max_degree))
         for nodeid in self.G.nodes():
+            # 和构建训练的adj唯一一点区别就是采样的邻居不会筛选，会选取所有的邻居
             neighbors = np.array([self.id2idx[neighbor] 
                 for neighbor in self.G.neighbors(nodeid)])
             if len(neighbors) == 0:
@@ -259,9 +276,11 @@ class NodeMinibatchIterator(object):
         return adj
 
     def end(self):
+        ''' 当前的batch_num到达了这个数据集的end了么 '''
         return self.batch_num * self.batch_size >= len(self.train_nodes)
 
     def batch_feed_dict(self, batch_nodes, val=False):
+        ''' 从batch_nodes中获取nodes中的batch，和label信息等 '''
         batch1id = batch_nodes
         batch1 = [self.id2idx[n] for n in batch1id]
               
@@ -271,6 +290,7 @@ class NodeMinibatchIterator(object):
         feed_dict.update({self.placeholders['batch']: batch1})
         feed_dict.update({self.placeholders['labels']: labels})
 
+        # 最终获得feed dict
         return feed_dict, labels
 
     def node_val_feed_dict(self, size=None, test=False):
@@ -314,6 +334,7 @@ class NodeMinibatchIterator(object):
 
     def shuffle(self):
         """ Re-shuffle the training set.
+            shuffle只需要shuffle训练集，测试集不用
             Also reset the batch number.
         """
         self.train_nodes = np.random.permutation(self.train_nodes)

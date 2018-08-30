@@ -17,11 +17,13 @@ from graphsage.utils import load_data
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
 
 # Set random seed
+# 随机种子设置好后，后面所有的都可复现。numpy和tensorflow需要分别设置
 seed = 123
 np.random.seed(seed)
 tf.set_random_seed(seed)
 
 # Settings
+# 使用tensorflow设置flags
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 
@@ -56,6 +58,7 @@ flags.DEFINE_integer('gpu', 1, "which gpu to use.")
 flags.DEFINE_integer('print_every', 5, "How often to print training info.")
 flags.DEFINE_integer('max_total_steps', 10**10, "Maximum total number of iterations")
 
+# 设置gpu的设备
 os.environ["CUDA_VISIBLE_DEVICES"]=str(FLAGS.gpu)
 
 GPU_MEM_FRACTION = 0.8
@@ -111,6 +114,7 @@ def incremental_evaluate(sess, model, minibatch_iter, size, test=False):
 
 def construct_placeholders(num_classes):
     # Define placeholders
+    # placeholders存为一个字典，这个设计其实挺好的
     placeholders = {
         'labels' : tf.placeholder(tf.float32, shape=(None, num_classes), name='labels'),
         'batch' : tf.placeholder(tf.int32, shape=(None), name='batch1'),
@@ -132,8 +136,10 @@ def train(train_data, test_data=None):
 
     if not features is None:
         # pad with dummy zero vector
+        # pad一行值为0的特征
         features = np.vstack([features, np.zeros((features.shape[1],))])
 
+    # 只有在random_context情况下才使用
     context_pairs = train_data[3] if FLAGS.random_context else None
     placeholders = construct_placeholders(num_classes)
     minibatch = NodeMinibatchIterator(G, 
@@ -144,13 +150,16 @@ def train(train_data, test_data=None):
             batch_size=FLAGS.batch_size,
             max_degree=FLAGS.max_degree, 
             context_pairs = context_pairs)
+    # 邻居矩阵是用placeholder的形式传入，因此是个常量，提供关于图的结构信息
     adj_info_ph = tf.placeholder(tf.int32, shape=minibatch.adj.shape)
+    # 为啥要用Variable wrap一下
     adj_info = tf.Variable(adj_info_ph, trainable=False, name="adj_info")
 
     if FLAGS.model == 'graphsage_mean':
         # Create model
         sampler = UniformNeighborSampler(adj_info)
         if FLAGS.samples_3 != 0:
+            # 若干层的信息都存储在这个layer_infos里
             layer_infos = [SAGEInfo("node", sampler, FLAGS.samples_1, FLAGS.dim_1),
                                 SAGEInfo("node", sampler, FLAGS.samples_2, FLAGS.dim_2),
                                 SAGEInfo("node", sampler, FLAGS.samples_3, FLAGS.dim_2)]
@@ -238,6 +247,7 @@ def train(train_data, test_data=None):
     else:
         raise Exception('Error: model name unrecognized.')
 
+    # gpu配置
     config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
     config.gpu_options.allow_growth = True
     #config.gpu_options.per_process_gpu_memory_fraction = GPU_MEM_FRACTION
@@ -259,7 +269,8 @@ def train(train_data, test_data=None):
 
     train_adj_info = tf.assign(adj_info, minibatch.adj)
     val_adj_info = tf.assign(adj_info, minibatch.test_adj)
-    for epoch in range(FLAGS.epochs): 
+    for epoch in range(FLAGS.epochs):
+        # 每个epoch
         minibatch.shuffle() 
 
         iter = 0
@@ -276,6 +287,7 @@ def train(train_data, test_data=None):
             train_cost = outs[2]
 
             if iter % FLAGS.validate_iter == 0:
+                # 这里是validation逻辑，不重要
                 # Validation
                 sess.run(val_adj_info.op)
                 if FLAGS.validate_batch_size == -1:

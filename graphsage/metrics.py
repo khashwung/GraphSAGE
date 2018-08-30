@@ -4,6 +4,7 @@ import tensorflow as tf
 # Parts of this code file were originally forked from
 # https://github.com/tkipf/gcn
 # which itself was very inspired by the keras package
+# 看起来这种用mask的方式进行损失函数的计算也是源于keras。mask用于过滤是训练集还是验证集、测试集等
 def masked_logit_cross_entropy(preds, labels, mask):
     """Logit cross-entropy loss with masking."""
     loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=preds, labels=labels)

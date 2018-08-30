@@ -5,6 +5,7 @@ import numpy as np
 # Parts of this code file are derived from
 # https://github.com/tkipf/gcn
 # which is under an identical MIT license as GraphSAGE
+# 初始化unitlity，一般常用glorot，这样可以nomalize方差
 
 def uniform(shape, scale=0.05, name=None):
     """Uniform init."""
